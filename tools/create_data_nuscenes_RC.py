@@ -2,12 +2,10 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 
 import pickle
-
 import numpy as np
 from nuscenes import NuScenes
 from nuscenes.utils.data_classes import Box
 from pyquaternion import Quaternion
-
 import mmcv
 
 from data_converter import nuscenes_converter_RC as nuscenes_converter
@@ -44,24 +42,13 @@ classes = [
 
 
 def get_gt(info):
-    """Generate gt labels from info.
-
-    Args:
-        info(dict): Infos needed to generate gt labels.
-
-    Returns:
-        Tensor: GT bboxes.
-        Tensor: GT labels.
-    """
+    """Generate gt labels from info."""
     ego2global_rotation = info['cams']['CAM_FRONT']['ego2global_rotation']
-    ego2global_translation = info['cams']['CAM_FRONT'][
-        'ego2global_translation']
+    ego2global_translation = info['cams']['CAM_FRONT']['ego2global_translation']
     trans = -np.array(ego2global_translation)
     rot = Quaternion(ego2global_rotation).inverse
-    gt_boxes = list()
-    gt_labels = list()
+    gt_boxes, gt_labels = [], []
     for ann_info in info['ann_infos']:
-        # Use ego coordinate.
         if (map_name_from_general_to_detection[ann_info['category_name']]
                 not in classes
                 or ann_info['num_lidar_pts'] + ann_info['num_radar_pts'] <= 0):
@@ -87,85 +74,45 @@ def get_gt(info):
 
 
 def nuscenes_data_prep(root_path, info_prefix, version, max_sweeps=10):
-    """Prepare data related to nuScenes dataset.
-
-    Related data consists of '.pkl' files recording basic infos,
-    2D annotations and groundtruth database.
-
-    Args:
-        root_path (str): Path of dataset root.
-        info_prefix (str): The prefix of info filenames.
-        version (str): Dataset version.
-        max_sweeps (int, optional): Number of input consecutive frames.
-            Default: 10
-    """
+    """Prepare data related to nuScenes dataset."""
     nuscenes_converter.create_nuscenes_infos(
         root_path, info_prefix, version=version, max_sweeps=max_sweeps)
 
 
-def add_ann_adj_info(extra_tag):
-    nuscenes_version = 'v1.0-trainval'
+def add_ann_adj_info(extra_tag, version='v1.0-mini'):
     dataroot = './data/nuscenes/'
-    nuscenes = NuScenes(nuscenes_version, dataroot)
-    for set in ['train', 'val']:
-        dataset = pickle.load(
-            open('./data/nuscenes/%s_infos_%s.pkl' % (extra_tag, set), 'rb'))
-        for id in mmcv.track_iter_progress(range(len(dataset['infos']))):
-            info = dataset['infos'][id]
-            # get sweep adjacent frame info
-            sample = nuscenes.get('sample', info['token'])
-            ann_infos = list()
-            for ann in sample['anns']:
-                ann_info = nuscenes.get('sample_annotation', ann)
-                velocity = nuscenes.box_velocity(ann_info['token'])
-                if np.any(np.isnan(velocity)):
-                    velocity = np.zeros(3)
-                ann_info['velocity'] = velocity
-                ann_infos.append(ann_info)
-            dataset['infos'][id]['ann_infos'] = ann_infos
-            dataset['infos'][id]['ann_infos'] = get_gt(dataset['infos'][id])
-            dataset['infos'][id]['scene_token'] = sample['scene_token']
+    nuscenes = NuScenes(version, dataroot)
+    dataset = pickle.load(
+        open(f'./data/nuscenes/{extra_tag}_infos_train.pkl', 'rb'))
+    for id in mmcv.track_iter_progress(range(len(dataset['infos']))):
+        info = dataset['infos'][id]
+        sample = nuscenes.get('sample', info['token'])
+        ann_infos = []
+        for ann in sample['anns']:
+            ann_info = nuscenes.get('sample_annotation', ann)
+            velocity = nuscenes.box_velocity(ann_info['token'])
+            if np.any(np.isnan(velocity)):
+                velocity = np.zeros(3)
+            ann_info['velocity'] = velocity
+            ann_infos.append(ann_info)
+        dataset['infos'][id]['ann_infos'] = ann_infos
+        dataset['infos'][id]['ann_infos'] = get_gt(dataset['infos'][id])
+        dataset['infos'][id]['scene_token'] = sample['scene_token']
 
-        with open('./data/nuscenes/%s_infos_%s.pkl' % (extra_tag, set),
-                  'wb') as fid:
-            pickle.dump(dataset, fid)
-
-    nuscenes_version = 'v1.0-test'
-    dataroot = './data/nuscenes/'
-    nuscenes = NuScenes(nuscenes_version, dataroot)
-    for set in ['test']:
-        dataset = pickle.load(
-            open('./data/nuscenes/%s_infos_%s.pkl' % (extra_tag, set), 'rb'))
-        for id in mmcv.track_iter_progress(range(len(dataset['infos']))):
-            info = dataset['infos'][id]
-            # get sweep adjacent frame info
-            sample = nuscenes.get('sample', info['token'])
-            dataset['infos'][id]['scene_token'] = sample['scene_token']
-
-        with open('./data/nuscenes/%s_infos_%s.pkl' % (extra_tag, set),
-                  'wb') as fid:
-            pickle.dump(dataset, fid)
+    with open(f'./data/nuscenes/{extra_tag}_infos_train.pkl', 'wb') as fid:
+        pickle.dump(dataset, fid)
 
 
 if __name__ == '__main__':
-    dataset = 'nuscenes'
-    version = 'v1.0'
-    train_version = f'{version}-trainval'
     root_path = './data/nuscenes'
-    extra_tag = 'nuscenes_RC' #nuscenes_R
-    nuscenes_data_prep(
-        root_path=root_path,
-        info_prefix=extra_tag,
-        version=train_version,
-        max_sweeps=0)
+    extra_tag = 'nuscenes_RC_mini'
+    version = 'v1.0-mini'
 
-    test_version = f'{version}-test'
     nuscenes_data_prep(
         root_path=root_path,
         info_prefix=extra_tag,
-        version=test_version,
+        version=version,
         max_sweeps=0)
 
     print('add_ann_infos')
-    add_ann_adj_info(extra_tag)
-
+    add_ann_adj_info(extra_tag, version)
